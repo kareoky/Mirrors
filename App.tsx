@@ -1,4 +1,5 @@
-import React, { useState, useCallback } from 'react';
+
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
 import { ResultDisplay } from './components/ResultDisplay';
@@ -7,6 +8,20 @@ import { generateDecorImage, editDecorImage } from './services/geminiService';
 import type { ImageState } from './types';
 import { SparklesIcon } from './components/Icons';
 import { OptionSelector } from './components/OptionSelector';
+import { ApiKeySelector } from './components/ApiKeySelector';
+
+// FIX: To resolve a TypeScript error where the property 'aistudio' on 'Window'
+// was declared with a conflicting type, we now define a named global interface 'AIStudio'
+// and use it. This aligns the type with other declarations in the project.
+declare global {
+  interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+  }
+  interface Window {
+    aistudio?: AIStudio;
+  }
+}
 
 const mirrorTypeOptions = [
   { value: 'classic', label: 'كلاسيك' },
@@ -19,7 +34,6 @@ const placementOptions = [
   { value: 'floor-standing', label: 'قائمة على الأرض' },
 ];
 
-
 const App: React.FC = () => {
   const [mirrorImage, setMirrorImage] = useState<ImageState>({ file: null, preview: null });
   const [decorImage, setDecorImage] = useState<ImageState>({ file: null, preview: null });
@@ -29,128 +43,201 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
+  const [retryAfter, setRetryAfter] = useState(0);
+  const retryIntervalRef = useRef<number | null>(null);
 
-  const handleGenerate = useCallback(async () => {
-    if (!mirrorImage.file) {
-      setError('من فضلك ارفع صورة المرآة للبدء.');
-      return;
+  useEffect(() => {
+    const checkApiKey = async () => {
+      if (window.aistudio) {
+        try {
+          const hasKey = await window.aistudio.hasSelectedApiKey();
+          setHasApiKey(hasKey);
+        } catch (e) {
+          console.error("Error checking for API key:", e);
+          setHasApiKey(false);
+        }
+      } else {
+        // Fallback or development mode
+        console.warn("aistudio not available.");
+        setHasApiKey(true); // Assume key is available via process.env
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleApiError = useCallback((e: unknown) => {
+    console.error(e);
+    let errorMessage = "حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.";
+
+    if (e instanceof Error) {
+      errorMessage = e.message;
+
+      if (e.message.includes("API_KEY")) {
+        errorMessage = "لم يتم العثور على مفتاح API. يرجى التأكد من تكوينه بشكل صحيح.";
+      } else if (e.message.includes("RESOURCE_EXHAUSTED") || e.message.includes("429")) {
+        const retryMatch = e.message.match(/retry in (\d+(\.\d+)?)s/i);
+        const retrySeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 60;
+        
+        setRetryAfter(retrySeconds);
+        errorMessage = `لقد تجاوزت حصتك في الطبقة المجانية.`;
+
+        if (retryIntervalRef.current) clearInterval(retryIntervalRef.current);
+        retryIntervalRef.current = window.setInterval(() => {
+          setRetryAfter(prev => {
+            if (prev <= 1) {
+              if (retryIntervalRef.current) clearInterval(retryIntervalRef.current);
+              setError(null);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
     }
+    setError(errorMessage);
+  }, []);
 
+  const handleGenerate = async () => {
+    if (!mirrorImage.file) return;
     setIsLoading(true);
     setError(null);
     setGeneratedImage(null);
+    if (retryIntervalRef.current) clearInterval(retryIntervalRef.current);
+    setRetryAfter(0);
 
     try {
-      const result = await generateDecorImage(mirrorImage.file, decorImage.file, mirrorType, mirrorPlacement);
-      setGeneratedImage(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ غير معروف. من فضلك حاول مرة أخرى.');
-      console.error(err);
+      const image = await generateDecorImage(mirrorImage.file, decorImage.file, mirrorType, mirrorPlacement);
+      setGeneratedImage(image);
+    } catch (e) {
+      handleApiError(e);
     } finally {
       setIsLoading(false);
     }
-  }, [mirrorImage, decorImage, mirrorType, mirrorPlacement]);
-  
-  const handleRegenerate = useCallback(async (editPrompt: string) => {
-    if (!generatedImage) {
-      setError('يجب إنشاء صورة أولية قبل التعديل.');
-      return;
-    }
-    if (!editPrompt.trim()) {
-        setError('من فضلك أدخل تعليمات لتعديل الصورة.');
-        return;
-    }
+  };
 
+  const handleRegenerate = async (prompt: string) => {
+    if (!generatedImage || !prompt) return;
     setIsRegenerating(true);
     setError(null);
+    if (retryIntervalRef.current) clearInterval(retryIntervalRef.current);
+    setRetryAfter(0);
 
     try {
-      const result = await editDecorImage(generatedImage, editPrompt);
-      setGeneratedImage(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'حدث خطأ غير معروف أثناء التعديل.');
-      console.error(err);
+      const image = await editDecorImage(generatedImage, prompt);
+      setGeneratedImage(image);
+    } catch (e) {
+      handleApiError(e);
     } finally {
       setIsRegenerating(false);
     }
-  }, [generatedImage]);
+  };
+  
+  const handleSelectKey = async () => {
+    if (window.aistudio) {
+      try {
+        await window.aistudio.openSelectKey();
+        // Assume success and let the user proceed. The next API call will validate the key.
+        setHasApiKey(true);
+      } catch (e) {
+        console.error("Error opening API key selector:", e);
+        setError("فشل فتح محدد مفتاح API.");
+      }
+    }
+  };
 
+
+  if (hasApiKey === null) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-brand-secondary">
+        <SparklesIcon className="w-16 h-16 text-brand-accent animate-pulse" />
+      </div>
+    );
+  }
+
+  if (hasApiKey === false) {
+    return <ApiKeySelector onSelectKey={handleSelectKey} />;
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans text-brand-primary">
+    <div className="min-h-screen bg-brand-secondary text-brand-primary font-sans">
       <Header />
-      <main className="container mx-auto p-6 md:p-12">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16">
-          {/* Controls Column */}
-          <div className="bg-white rounded-xl shadow-xl p-8 md:p-10 flex flex-col space-y-8 border border-gray-200">
-            <div className="space-y-2">
-              <h2 className="text-3xl font-bold text-gray-900">١. ارفع صورة مرآتك</h2>
-              <p className="text-gray-700">قدم صورة واضحة للمرآة التي تريد تصورها.</p>
+      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start">
+          
+          {/* Left Column: Inputs */}
+          <div className="space-y-8">
+            <div className="space-y-4">
+                <h2 className="text-2xl font-bold text-gray-800">1. ارفع صورك</h2>
+                <p className="text-gray-600">
+                    ارفع صورة واضحة للمرآة. اختياريًا، يمكنك رفع صورة مرجعية للديكور لإلهام الذكاء الاصطناعي.
+                </p>
             </div>
-            <ImageUploader
-              label="صورة المرآة"
-              imageState={mirrorImage}
-              onImageChange={setMirrorImage}
+            <ImageUploader 
+              label="صورة المرآة (مطلوبة)" 
+              imageState={mirrorImage} 
+              onImageChange={setMirrorImage} 
             />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               <OptionSelector 
-                label="نوع المرآة"
-                options={mirrorTypeOptions}
-                selectedValue={mirrorType}
-                onChange={setMirrorType}
-               />
-               <OptionSelector 
-                label="مكان التركيب"
-                options={placementOptions}
-                selectedValue={mirrorPlacement}
-                onChange={setMirrorPlacement}
-               />
-            </div>
-
-
-            <div className="space-y-2 pt-2">
-              <h2 className="text-3xl font-bold text-gray-900">٢. أضف إلهام (اختياري)</h2>
-              <p className="text-gray-700">ارفع صورة مرجعية للستايل الذي تحبه.</p>
-            </div>
-            <ImageUploader
-              label="مرجع ستايل الديكور"
-              imageState={decorImage}
-              onImageChange={setDecorImage}
+            <ImageUploader 
+              label="صورة مرجعية للديكور (اختياري)" 
+              imageState={decorImage} 
+              onImageChange={setDecorImage} 
             />
-            
+            <div className="space-y-4 pt-4">
+              <h2 className="text-2xl font-bold text-gray-800">2. حدد خياراتك</h2>
+              <p className="text-gray-600">
+                أخبرنا المزيد عن مرآتك لمساعدتنا في وضعها بشكل مثالي في المشهد الجديد.
+              </p>
+            </div>
+            <OptionSelector 
+              label="نوع المرآة"
+              options={mirrorTypeOptions}
+              selectedValue={mirrorType}
+              onChange={setMirrorType}
+            />
+            <OptionSelector 
+              label="طريقة التثبيت"
+              options={placementOptions}
+              selectedValue={mirrorPlacement}
+              onChange={setMirrorPlacement}
+            />
+
             <div className="pt-4">
               <Button
                 onClick={handleGenerate}
-                disabled={!mirrorImage.file || isLoading || isRegenerating}
                 isLoading={isLoading}
+                disabled={!mirrorImage.file || isLoading || isRegenerating || retryAfter > 0}
                 className="w-full"
-                color="primary"
               >
-                <SparklesIcon className="w-5 h-5 ml-2" />
-                {isLoading ? 'جاري تصميم مساحتك...' : 'إنشاء ديكور جديد'}
+                <SparklesIcon className="w-6 h-6 ml-3" />
+                إنشاء
               </Button>
-              {error && <p className="text-red-600 mt-4 text-center lg:text-right">{error}</p>}
             </div>
           </div>
 
-          {/* Result Column */}
-          <div className="bg-white rounded-xl shadow-xl p-8 md:p-10 flex flex-col border border-gray-200">
-              <div className="space-y-2 mb-6">
-                <h2 className="text-3xl font-bold text-gray-900">٣. رؤيتك أصبحت حقيقة</h2>
-                <p className="text-gray-700">ها هي مرآتك في مكان جديد مصمم باحترافية.</p>
-            </div>
+          {/* Right Column: Results */}
+          <div className="sticky top-8">
             <ResultDisplay
               generatedImage={generatedImage}
               isLoading={isLoading}
               isRegenerating={isRegenerating}
               onRegenerate={handleRegenerate}
+              retryAfter={retryAfter}
             />
           </div>
         </div>
+        {error && (
+            <div className="mt-8 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">
+                <strong className="font-bold">خطأ: </strong>
+                <span className="block sm:inline">{error}</span>
+                {retryAfter > 0 && (
+                  <span className="block sm:inline mt-1 sm:mt-0 mr-2 font-semibold">
+                    يرجى المحاولة مرة أخرى خلال {retryAfter} ثانية.
+                  </span>
+                )}
+            </div>
+        )}
       </main>
-      <footer className="text-center p-6 text-gray-500 text-sm mt-8">
-        <p>مدعوم بواسطة Gemini. تم التصميم بواسطة مهندس ذكاء اصطناعي عالمي.</p>
-      </footer>
     </div>
   );
 };

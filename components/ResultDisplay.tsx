@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { DownloadIcon, ImageIcon, SparklesIcon, MagicWandIcon } from './Icons';
 import { Button } from './Button';
@@ -7,6 +8,7 @@ interface ResultDisplayProps {
   isLoading: boolean;
   isRegenerating: boolean;
   onRegenerate: (prompt: string) => void;
+  retryAfter: number;
 }
 
 const LoadingState: React.FC = () => (
@@ -25,21 +27,23 @@ const InitialState: React.FC = () => (
     </div>
 );
 
-export const ResultDisplay: React.FC<ResultDisplayProps> = ({ generatedImage, isLoading, isRegenerating, onRegenerate }) => {
+export const ResultDisplay: React.FC<ResultDisplayProps> = ({ generatedImage, isLoading, isRegenerating, onRegenerate, retryAfter }) => {
   const [editPrompt, setEditPrompt] = useState('');
   
   const handleRegenerateClick = () => {
       onRegenerate(editPrompt);
   };
 
+  const isDisabled = isRegenerating || isLoading || retryAfter > 0;
+
   return (
-    <div className="flex-grow flex flex-col items-center justify-center w-full h-full min-h-[30rem] bg-gray-100 rounded-lg p-4">
+    <div className="flex-grow flex flex-col items-center justify-center w-full min-h-[30rem] bg-gray-100 rounded-lg p-4 shadow-inner">
       {isLoading ? (
         <LoadingState />
       ) : generatedImage ? (
         <div className="w-full h-full flex flex-col space-y-6">
-            <div className="flex-grow relative rounded-lg overflow-hidden flex items-center justify-center">
-                <img src={generatedImage} alt="Generated decor" className="w-full h-full object-contain" />
+            <div className="flex-grow relative rounded-lg overflow-hidden flex items-center justify-center bg-black/5">
+                <img src={generatedImage} alt="Generated decor" className="max-w-full max-h-full object-contain" />
                 {isRegenerating && (
                     <div className="absolute inset-0 bg-white bg-opacity-75 flex flex-col items-center justify-center transition-opacity duration-300">
                         <SparklesIcon className="w-12 h-12 text-brand-accent animate-pulse" />
@@ -70,13 +74,13 @@ export const ResultDisplay: React.FC<ResultDisplayProps> = ({ generatedImage, is
                           value={editPrompt}
                           onChange={(e) => setEditPrompt(e.target.value)}
                           placeholder="مثلاً: 'اجعل لون الحائط أزرق فاتح'"
-                          disabled={isRegenerating || isLoading}
+                          disabled={isDisabled}
                           className="flex-grow w-full px-4 py-3 text-base text-gray-800 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-accent focus:border-brand-accent transition-colors disabled:bg-gray-200"
                       />
                       <Button
                           onClick={handleRegenerateClick}
                           isLoading={isRegenerating}
-                          disabled={isRegenerating || isLoading}
+                          disabled={isDisabled}
                           className="flex-shrink-0 !py-3"
                       >
                           <SparklesIcon className="w-5 h-5 ml-2" />
