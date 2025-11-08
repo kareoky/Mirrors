@@ -1,5 +1,4 @@
-
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
 import { ResultDisplay } from './components/ResultDisplay';
@@ -8,20 +7,6 @@ import { generateDecorImage, editDecorImage } from './services/geminiService';
 import type { ImageState } from './types';
 import { SparklesIcon } from './components/Icons';
 import { OptionSelector } from './components/OptionSelector';
-import { ApiKeySelector } from './components/ApiKeySelector';
-
-// FIX: To resolve a TypeScript error where the property 'aistudio' on 'Window'
-// was declared with a conflicting type, we now define a named global interface 'AIStudio'
-// and use it. This aligns the type with other declarations in the project.
-declare global {
-  interface AIStudio {
-    hasSelectedApiKey: () => Promise<boolean>;
-    openSelectKey: () => Promise<void>;
-  }
-  interface Window {
-    aistudio?: AIStudio;
-  }
-}
 
 const mirrorTypeOptions = [
   { value: 'classic', label: 'كلاسيك' },
@@ -43,28 +28,9 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isRegenerating, setIsRegenerating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [retryAfter, setRetryAfter] = useState(0);
   const retryIntervalRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const checkApiKey = async () => {
-      if (window.aistudio) {
-        try {
-          const hasKey = await window.aistudio.hasSelectedApiKey();
-          setHasApiKey(hasKey);
-        } catch (e) {
-          console.error("Error checking for API key:", e);
-          setHasApiKey(false);
-        }
-      } else {
-        // Fallback or development mode
-        console.warn("aistudio not available.");
-        setHasApiKey(true); // Assume key is available via process.env
-      }
-    };
-    checkApiKey();
-  }, []);
 
   const handleApiError = useCallback((e: unknown) => {
     console.error(e);
@@ -73,9 +39,8 @@ const App: React.FC = () => {
     if (e instanceof Error) {
       errorMessage = e.message;
 
-      if (e.message.includes("API_KEY")) {
-        errorMessage = "لم يتم العثور على مفتاح API. يرجى التأكد من تكوينه بشكل صحيح.";
-      } else if (e.message.includes("RESOURCE_EXHAUSTED") || e.message.includes("429")) {
+      // Check for rate-limiting messages passed from the backend function
+      if (e.message.includes("RESOURCE_EXHAUSTED") || e.message.includes("429")) {
         const retryMatch = e.message.match(/retry in (\d+(\.\d+)?)s/i);
         const retrySeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 60;
         
@@ -132,32 +97,6 @@ const App: React.FC = () => {
       setIsRegenerating(false);
     }
   };
-  
-  const handleSelectKey = async () => {
-    if (window.aistudio) {
-      try {
-        await window.aistudio.openSelectKey();
-        // Assume success and let the user proceed. The next API call will validate the key.
-        setHasApiKey(true);
-      } catch (e) {
-        console.error("Error opening API key selector:", e);
-        setError("فشل فتح محدد مفتاح API.");
-      }
-    }
-  };
-
-
-  if (hasApiKey === null) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-brand-secondary">
-        <SparklesIcon className="w-16 h-16 text-brand-accent animate-pulse" />
-      </div>
-    );
-  }
-
-  if (hasApiKey === false) {
-    return <ApiKeySelector onSelectKey={handleSelectKey} />;
-  }
 
   return (
     <div className="min-h-screen bg-brand-secondary text-brand-primary font-sans">
