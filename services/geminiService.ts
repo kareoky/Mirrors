@@ -33,7 +33,7 @@ export const generateDecorImage = async (
   if (!process.env.API_KEY) {
     throw new Error("متغير البيئة API_KEY غير موجود.");
   }
-  const ai = new GoogleGenAI({ apiKey: AIzaSyCxVe-KiK8Wakwho6XdsOkegElLlPoaPjo });
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   const mirrorPart = await fileToGenerativePart(mirrorFile);
   const parts: any[] = [mirrorPart];
