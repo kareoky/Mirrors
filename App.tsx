@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
 import { ResultDisplay } from './components/ResultDisplay';
@@ -31,21 +31,18 @@ const App: React.FC = () => {
   const [retryAfter, setRetryAfter] = useState(0);
   const retryIntervalRef = useRef<number | null>(null);
 
-  const handleApiError = useCallback((e: unknown) => {
+  const handleApiError = (e: unknown) => {
     console.error(e);
     let errorMessage = "حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.";
     let retrySeconds = 0;
 
     if (e instanceof Error) {
-        // Default to the raw error message
         errorMessage = e.message;
 
-        if (e.message.includes("API_KEY") || e.message.includes("was not found")) {
-            errorMessage = "مفتاح API المقدم غير صالح أو غير موجود. يرجى التأكد من تكوين متغير البيئة API_KEY بشكل صحيح.";
+        if (e.message.includes("API_KEY")) {
+            errorMessage = "مفتاح API غير صالح أو مفقود. يرجى التأكد من أن متغير البيئة API_KEY تم إعداده بشكل صحيح.";
         } else if (e.message.includes("RESOURCE_EXHAUSTED") || e.message.includes("429")) {
-            // Try to parse detailed error info from the message
             try {
-                // The error from the SDK often includes a JSON string after some text.
                 const jsonStartIndex = e.message.indexOf('{');
                 if (jsonStartIndex !== -1) {
                     const errorJsonString = e.message.substring(jsonStartIndex);
@@ -62,7 +59,6 @@ const App: React.FC = () => {
                     throw new Error("No JSON found in error message");
                 }
             } catch (parseError) {
-                // Fallback for non-JSON error messages that still indicate rate limiting
                 const retryMatch = e.message.match(/retry in (\d+(\.\d+)?)s/i);
                 retrySeconds = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 60;
                 errorMessage = `لقد تجاوزت حصتك الحالية. يرجى التحقق من خطتك وتفاصيل الفوترة.`;
@@ -86,7 +82,7 @@ const App: React.FC = () => {
     }
     
     setError(errorMessage);
-  }, []);
+  };
 
   const handleGenerate = async () => {
     if (!mirrorImage.file) return;
